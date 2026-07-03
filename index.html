@@ -86,11 +86,15 @@
     white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis}
   .buy-tag.empty{background:#f3ece0;color:#a0917a}
   .prod-count{font-size:.56rem;font-weight:700;padding:2px 6px;border-radius:20px;background:#e8f0e9;color:var(--forest)}
-  .camp-actions{display:none}
-  .icon-btn{background:#fff;border:1px solid var(--line);border-radius:8px;width:26px;height:26px;
-    display:grid;place-items:center;cursor:pointer;font-size:.8rem;transition:.15s;padding:0}
+  .camp-actions{display:flex;gap:3px;flex-shrink:0;align-self:center;
+    opacity:0;transition:opacity .15s;pointer-events:none}
+  .camp:hover .camp-actions{opacity:1;pointer-events:auto}
+  .icon-btn{background:#fff;border:1px solid var(--line);border-radius:8px;width:24px;height:24px;
+    display:grid;place-items:center;cursor:pointer;font-size:.72rem;transition:.15s;padding:0}
   .icon-btn:hover{border-color:var(--gold);background:#fffdf6}
   .icon-btn.del:hover{border-color:var(--brick);background:#fdeee9}
+  /* em telas de toque (sem hover), os botões ficam sempre visíveis */
+  @media (hover:none){.camp-actions{opacity:1;pointer-events:auto}}
   .add-camp-btn{background:var(--forest);color:#fff;border:none;border-radius:8px;padding:3px 8px;
     cursor:pointer;font-size:.6rem;font-weight:700;font-family:inherit;transition:.2s;letter-spacing:.02em}
   .add-camp-btn:hover{background:#345c40}
@@ -287,13 +291,23 @@ async function loadState(){
   }
   setStatus("Carregando da nuvem…","sync-load");
   try{
-    const r=await fetch(CLOUD_URL+"?action=get",{method:"GET"});
-    const j=await r.json();
-    if(j&&j.state&&j.state.campanhas){state=j.state;}
-    else{state=initDefault();await pushNow();}
+    const ctrl=new AbortController();
+    const to=setTimeout(()=>ctrl.abort(),12000); // não pendura mais que 12s
+    const r=await fetch(CLOUD_URL+"?action=get",{method:"GET",signal:ctrl.signal});
+    clearTimeout(to);
+    const txt=await r.text();
+    let j=null; try{j=JSON.parse(txt);}catch(_){}
+    if(j&&j.state&&j.state.campanhas){
+      state=j.state;
+      setStatus("✓ Sincronizado","ok");
+    }else{
+      // primeira vez (nuvem vazia): usa padrão e grava sem travar a tela
+      state=initDefault();
+      setStatus("✓ Sincronizado","ok");
+      pushNow(); // sem await: não bloqueia a exibição
+    }
     cloudReady=true;
     localStorage.setItem(CKEY,JSON.stringify(state));
-    setStatus("✓ Sincronizado","ok");
   }catch(e){
     console.error(e);
     state=cached?JSON.parse(cached):initDefault();
@@ -555,8 +569,13 @@ document.addEventListener("keydown",e=>{if(e.key==="Escape")document.querySelect
 const reloadBtn=document.getElementById("reloadBtn");
 if(reloadBtn)reloadBtn.onclick=async()=>{await loadState();render();};
 
-// inicialização: carrega da nuvem e só então desenha
-(async()=>{await loadState();render();})();
+// inicialização: tenta carregar da nuvem, mas SEMPRE desenha a tela
+(async()=>{
+  try{ await loadState(); }
+  catch(e){ console.error(e); }
+  if(!state) state=initDefault();  // rede de segurança
+  render();
+})();
 </script>
 </body>
 </html>
