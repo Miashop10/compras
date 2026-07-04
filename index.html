@@ -284,36 +284,44 @@ function setStatus(txt,cls){
 // carrega o estado da nuvem ao abrir
 async function loadState(){
   const cached=localStorage.getItem(CKEY);
+  const cachedState = cached ? safeParse(cached) : null;
   if(!cloudOn()){
-    state=cached?JSON.parse(cached):initDefault();
+    state=cachedState||initDefault();
     setStatus("Modo local (nuvem não configurada)","warn");
     return;
   }
   setStatus("Carregando da nuvem…","sync-load");
   try{
     const ctrl=new AbortController();
-    const to=setTimeout(()=>ctrl.abort(),12000); // não pendura mais que 12s
+    const to=setTimeout(()=>ctrl.abort(),12000);
     const r=await fetch(CLOUD_URL+"?action=get",{method:"GET",signal:ctrl.signal});
     clearTimeout(to);
     const txt=await r.text();
-    let j=null; try{j=JSON.parse(txt);}catch(_){}
+    const j=safeParse(txt);
     if(j&&j.state&&j.state.campanhas){
+      // nuvem tem dados válidos -> usa
       state=j.state;
       setStatus("✓ Sincronizado","ok");
+    }else if(cachedState&&cachedState.campanhas){
+      // nuvem vazia/ilegível MAS existe cache local -> preserva local e reenvia
+      state=cachedState;
+      setStatus("✓ Sincronizado (local)","ok");
+      pushNow();
     }else{
-      // primeira vez (nuvem vazia): usa padrão e grava sem travar a tela
+      // realmente primeira vez, nada em lugar nenhum -> padrão
       state=initDefault();
       setStatus("✓ Sincronizado","ok");
-      pushNow(); // sem await: não bloqueia a exibição
+      pushNow();
     }
     cloudReady=true;
     localStorage.setItem(CKEY,JSON.stringify(state));
   }catch(e){
     console.error(e);
-    state=cached?JSON.parse(cached):initDefault();
+    state=cachedState||initDefault();
     setStatus("⚠ Sem conexão — usando cópia local","warn");
   }
 }
+function safeParse(s){try{return JSON.parse(s);}catch(_){return null;}}
 
 // envia o estado atual para a nuvem
 async function pushNow(){
@@ -321,11 +329,15 @@ async function pushNow(){
   if(!cloudOn())return;
   setStatus("Salvando…","sync-load");
   try{
+    // Apps Script responde POST com redirect p/ googleusercontent; no-cors evita
+    // o bloqueio de CORS e garante que a gravação chegue ao servidor.
     await fetch(CLOUD_URL,{
       method:"POST",
+      mode:"no-cors",
       headers:{"Content-Type":"text/plain;charset=utf-8"},
       body:JSON.stringify({action:"save",state})
     });
+    // com no-cors a resposta é opaca (não dá para ler), mas o POST foi entregue
     setStatus("✓ Salvo na nuvem","ok");
   }catch(e){
     console.error(e);
